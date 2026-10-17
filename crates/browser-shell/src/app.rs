@@ -26,6 +26,10 @@ struct ElementStyle {
     font_size: f32,
     color: Color,
     background_color: Option<Color>,
+    margin_top: f32,
+    margin_bottom: f32,
+    padding_top: f32,
+    padding_bottom: f32,
     indent: f32,
     prefix: String,
 }
@@ -308,6 +312,10 @@ impl App {
                 font_size: 16.0,
                 color: Color::new(0.8, 0.0, 0.0, 1.0),
                 background_color: None,
+                margin_top: 0.0,
+                margin_bottom: 0.0,
+                padding_top: 0.0,
+                padding_bottom: 0.0,
                 indent: 10.0,
                 prefix: String::new(),
             };
@@ -340,6 +348,10 @@ impl App {
             font_size,
             color,
             background_color,
+            margin_top: computed.margin.top,
+            margin_bottom: computed.margin.bottom,
+            padding_top: computed.padding.top,
+            padding_bottom: computed.padding.bottom,
             indent,
             prefix,
         }
@@ -421,6 +433,9 @@ impl App {
                     for element in &self.render_elements {
                         let style = Self::get_style(element, stylesheet);
                         let line_height = style.font_size + 6.0;
+                        // Apply CSS margin-top
+                        y += style.margin_top;
+                        let element_start_y = y;
 
                         if y + line_height > self.size.height {
                             break;
@@ -436,9 +451,8 @@ impl App {
                             let full_text = format!("{}{}", style.prefix, text);
                             let text_width = r.measure_line_with_size(&full_text, style.font_size) as f32;
                             let bg_width = text_width + 20.0;
-                            let bg_height = line_height;
+                            let bg_height = line_height + style.padding_top + style.padding_bottom;
 
-                            // Draw background using a solid color quad
                             let mut bg_rgba = Vec::with_capacity(bg_width as usize * bg_height as usize * 4);
                             for _ in 0..(bg_width as usize * bg_height as usize) {
                                 bg_rgba.push((bg.r * 255.0) as u8);
@@ -449,10 +463,13 @@ impl App {
                             let bg_texture = text_renderer.create_texture(&bg_rgba, bg_width as u32, bg_height as u32);
                             text_renderer.draw_texture(
                                 &mut encoder, &view, &bg_texture,
-                                style.indent - 10.0, y,
+                                style.indent - 10.0, element_start_y,
                                 self.size.width as u32, self.size.height as u32,
                             );
                         }
+
+                        // Apply CSS padding-top
+                        y += style.padding_top;
 
                         let text = if element.tag == "a" {
                             format!("{} [{}]", element.text, element.href.as_deref().unwrap_or(""))
@@ -479,7 +496,11 @@ impl App {
                             );
                         }
 
+                        // Apply CSS padding-bottom
+                        y += style.padding_bottom;
                         y += line_height;
+                        // Apply CSS margin-bottom
+                        y += style.margin_bottom;
                     }
                 }
 
