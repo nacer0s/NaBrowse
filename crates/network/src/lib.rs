@@ -172,14 +172,27 @@ where
             Ok(0) => break,
             Ok(n) => buffer.extend_from_slice(&tmp[..n]),
             Err(e) => {
+                let msg = e.to_string();
                 // Some servers close TLS without sending close_notify.
                 // If we already received data, treat this as success.
-                if !buffer.is_empty() && e.to_string().contains("close_notify") {
+                if !buffer.is_empty() && msg.contains("close_notify") {
                     break;
+                }
+                // If buffer is empty and we got a close_notify error,
+                // the server closed before sending any data.
+                if buffer.is_empty() && msg.contains("close_notify") {
+                    return Err(NetworkError::Connection(
+                        "Server closed connection without sending data".to_string(),
+                    ));
                 }
                 return Err(NetworkError::Io(e));
             }
         }
+    }
+    if buffer.is_empty() {
+        return Err(NetworkError::Connection(
+            "Server closed connection without sending data".to_string(),
+        ));
     }
     Ok(buffer)
 }
