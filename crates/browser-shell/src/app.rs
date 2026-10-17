@@ -30,6 +30,47 @@ impl App {
         }
     }
 
+    fn init_window(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let mut attrs = WindowAttributes::default();
+        attrs.visible = true;
+        attrs.surface_size = Some(winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1024.0, 768.0)));
+
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => w,
+            Err(err) => {
+                tracing::error!("Failed to create window: {}", err);
+                event_loop.exit();
+                return;
+            }
+        };
+        tracing::info!("Window created successfully");
+
+        let size_px = window.surface_size();
+        tracing::info!("Window surface size: {}x{}", size_px.width, size_px.height);
+        self.size = Size::new(size_px.width as f32, size_px.height as f32);
+
+        tracing::info!("Initializing graphics...");
+        let graphics = match futures::executor::block_on(GraphicsContext::from_window(&*window))
+        {
+            Ok(g) => g,
+            Err(err) => {
+                tracing::error!("Failed to initialize graphics: {}", err);
+                event_loop.exit();
+                return;
+            }
+        };
+        tracing::info!("Graphics initialized successfully");
+
+        self.window = Some(window);
+        self.graphics = Some(graphics);
+
+        tracing::info!("NaBrowse window opened");
+    }
+
     fn render(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let graphics = self.graphics.as_mut().ok_or("graphics not initialized")?;
         let window = self.window.as_ref().ok_or("window not initialized")?;
@@ -95,51 +136,18 @@ impl App {
 }
 
 impl ApplicationHandler for App {
-    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, _cause: winit::event::StartCause) {
-        tracing::debug!("new_events called");
-        let _ = event_loop;
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: winit::event::StartCause) {
+        // In winit 0.31, `resumed()` is NOT called on initial startup.
+        // Window creation happens here on StartCause::Init.
+        if matches!(cause, winit::event::StartCause::Init) {
+            self.init_window(event_loop);
+        } else {
+            tracing::debug!("new_events: {:?}", cause);
+        }
     }
 
-    fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
-        tracing::info!("resumed() called");
-        if self.window.is_some() {
-            return;
-        }
-
-        let mut attrs = WindowAttributes::default();
-        attrs.visible = true;
-        attrs.surface_size = Some(winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1024.0, 768.0)));
-
-        let window = match event_loop.create_window(attrs) {
-            Ok(w) => w,
-            Err(err) => {
-                tracing::error!("Failed to create window: {}", err);
-                event_loop.exit();
-                return;
-            }
-        };
-        tracing::info!("Window created successfully");
-
-        let size_px = window.surface_size();
-        tracing::info!("Window surface size: {}x{}", size_px.width, size_px.height);
-        self.size = Size::new(size_px.width as f32, size_px.height as f32);
-
-        tracing::info!("Initializing graphics...");
-        let graphics = match futures::executor::block_on(GraphicsContext::from_window(&*window))
-        {
-            Ok(g) => g,
-            Err(err) => {
-                tracing::error!("Failed to initialize graphics: {}", err);
-                event_loop.exit();
-                return;
-            }
-        };
-        tracing::info!("Graphics initialized successfully");
-
-        self.window = Some(window);
-        self.graphics = Some(graphics);
-
-        tracing::info!("NaBrowse window opened");
+    fn resumed(&mut self, _event_loop: &dyn ActiveEventLoop) {
+        tracing::debug!("resumed() called");
     }
 
     fn can_create_surfaces(&mut self, _event_loop: &dyn ActiveEventLoop) {}
