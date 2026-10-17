@@ -195,7 +195,7 @@ impl JsEngine {
     /// Execute a source string in the global scope.
     pub fn execute(&mut self, source: &str) -> Result<JsValue, JsError> {
         let tokens = Lexer::new(source).tokenize();
-        let mut parser = Parser::new(tokens);
+        let parser = Parser::new(tokens);
         let statements = parser.parse_program()?;
 
         let mut interpreter = Interpreter {

@@ -114,6 +114,7 @@ impl LayoutEngine {
                     Size::new(content_width, line_height),
                 );
                 cursor_y += line_height;
+                let _ = cursor_y;
             }
             Node::Comment(_) => {
                 // Comments take no space.

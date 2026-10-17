@@ -19,5 +19,20 @@ fn main() {
 
     tracing::info!("Starting NaBrowse shell");
 
-    let _app = app::App::new();
+    let event_loop = match winit::event_loop::EventLoop::new() {
+        Ok(el) => el,
+        Err(err) => {
+            tracing::error!("Failed to create event loop: {}", err);
+            std::process::exit(1);
+        }
+    };
+
+    let app = app::App::new();
+
+    if let Err(err) = event_loop.run_app(app) {
+        tracing::error!("Event loop error: {}", err);
+        std::process::exit(1);
+    }
+
+    tracing::info!("NaBrowse shutting down");
 }
