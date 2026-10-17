@@ -137,9 +137,10 @@ impl App {
 
 impl ApplicationHandler for App {
     fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, cause: winit::event::StartCause) {
-        // In winit 0.31, `resumed()` is NOT called on initial startup.
-        // Window creation happens here on StartCause::Init.
-        if matches!(cause, winit::event::StartCause::Init) {
+        // In winit 0.31, StartCause::Init may not be delivered reliably.
+        // Create the window on the first new_events call regardless of cause.
+        if self.window.is_none() {
+            tracing::info!("Creating window (first new_events, cause: {:?})", cause);
             self.init_window(event_loop);
         } else {
             tracing::debug!("new_events: {:?}", cause);
@@ -181,6 +182,12 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
         if self.exiting {
             event_loop.exit();
+            return;
+        }
+        if self.window.is_none() {
+            // Fallback: create window here if new_events didn't trigger it
+            tracing::info!("Creating window from about_to_wait");
+            self.init_window(event_loop);
             return;
         }
         if let Some(ref w) = self.window {
