@@ -6,6 +6,7 @@
 use nabrowse_paint::{FontRasterizer, GraphicsContext};
 use nabrowse_shared::{Color, Size};
 use nabrowse_html::{HtmlParser, Node};
+use nabrowse_css::{CssParser, Stylesheet};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
@@ -16,12 +17,15 @@ struct RenderElement {
     tag: String,
     text: String,
     href: Option<String>,
+    classes: Vec<String>,
+    id: Option<String>,
 }
 
 /// Style for a renderable element.
 struct ElementStyle {
     font_size: f32,
     color: Color,
+    background_color: Option<Color>,
     indent: f32,
     prefix: String,
 }
@@ -37,6 +41,7 @@ pub struct App {
     render_elements: Vec<RenderElement>,
     page_status: String,
     font_rasterizer: Option<FontRasterizer>,
+    stylesheet: Option<nabrowse_css::Stylesheet>,
 }
 
 impl App {
@@ -51,6 +56,7 @@ impl App {
             render_elements: Vec::new(),
             page_status: String::new(),
             font_rasterizer: None,
+            stylesheet: None,
         }
     }
 
@@ -137,6 +143,26 @@ impl App {
                 let html = String::from_utf8_lossy(&response.body);
                 let document = HtmlParser::new(html.to_string()).parse();
 
+                // Walk DOM tree and collect renderable elements first
+                self.render_elements = Vec::new();
+                for child in &document.children {
+                    self.collect_elements(child);
+                }
+
+                // Extract CSS from <style> tags by iterating document children
+                let mut css_sources = Vec::new();
+                for child in &document.children {
+                    Self::extract_stylesheets(child, &mut css_sources);
+                }
+                let combined_css = css_sources.join("\n");
+                if !combined_css.is_empty() {
+                    let stylesheet = CssParser::new(combined_css).parse();
+                    tracing::info!("Parsed {} CSS rules", stylesheet.rules.len());
+                    self.stylesheet = Some(stylesheet);
+                } else {
+                    self.stylesheet = Some(nabrowse_css::Stylesheet::default());
+                }
+
                 // Walk DOM tree and collect renderable elements
                 self.render_elements = Vec::new();
                 for child in &document.children {
@@ -152,6 +178,8 @@ impl App {
                     tag: "error".to_string(),
                     text: self.page_status.clone(),
                     href: None,
+                    classes: Vec::new(),
+                    id: None,
                 }];
             }
         }
@@ -187,12 +215,25 @@ impl App {
                     .iter()
                     .find(|(k, _)| k == "href")
                     .map(|(_, v)| v.clone());
+                let classes: Vec<String> = el
+                    .attributes
+                    .iter()
+                    .find(|(k, _)| k == "class")
+                    .map(|(_, v)| v.split_whitespace().map(|s| s.to_string()).collect())
+                    .unwrap_or_default();
+                let id = el
+                    .attributes
+                    .iter()
+                    .find(|(k, _)| k == "id")
+                    .map(|(_, v)| v.clone());
 
                 if !text.is_empty() {
                     self.render_elements.push(RenderElement {
                         tag: tag.clone(),
                         text,
                         href,
+                        classes,
+                        id,
                     });
                 }
 
@@ -208,10 +249,37 @@ impl App {
                         tag: "text".to_string(),
                         text: text.to_string(),
                         href: None,
+                        classes: Vec::new(),
+                        id: None,
                     });
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Extract CSS from all <style> tags in the document.
+    fn extract_stylesheets(node: &Node, css_sources: &mut Vec<String>) {
+        if let Node::Element(el) = node {
+            if el.tag_name == "style" {
+                let mut css_text = String::new();
+                Self::collect_text_nodes(el, &mut css_text);
+                css_sources.push(css_text);
+            }
+            for child in &el.children {
+                Self::extract_stylesheets(child, css_sources);
+            }
+        }
+    }
+
+    /// Collect text content from an element's children (recursively).
+    fn collect_text_nodes(el: &nabrowse_html::Element, text: &mut String) {
+        for child in &el.children {
+            match child {
+                Node::Text(t) => text.push_str(&t.content),
+                Node::Element(el) => Self::collect_text_nodes(el, text),
+                _ => {}
+            }
         }
     }
 
@@ -233,66 +301,47 @@ impl App {
         text.trim().to_string()
     }
 
-    /// Get the style for an element based on its tag.
-    fn get_style(element: &RenderElement) -> ElementStyle {
+    /// Get the style for an element using the CSS engine.
+    fn get_style(element: &RenderElement, stylesheet: &nabrowse_css::Stylesheet) -> ElementStyle {
         if element.tag == "error" {
             return ElementStyle {
                 font_size: 16.0,
                 color: Color::new(0.8, 0.0, 0.0, 1.0),
+                background_color: None,
                 indent: 10.0,
                 prefix: String::new(),
             };
         }
 
-        match element.tag.as_str() {
-            "h1" => ElementStyle {
-                font_size: 28.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            "h2" => ElementStyle {
-                font_size: 24.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            "h3" => ElementStyle {
-                font_size: 20.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            "h4" | "h5" | "h6" => ElementStyle {
-                font_size: 16.0,
-                color: Color::new(0.1, 0.1, 0.1, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            "a" => ElementStyle {
-                font_size: 14.0,
-                color: Color::new(0.0, 0.0, 0.8, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            "li" => ElementStyle {
-                font_size: 14.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 30.0,
-                prefix: "\u{2022} ".to_string(),
-            },
-            "p" => ElementStyle {
-                font_size: 14.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
-            _ => ElementStyle {
-                font_size: 14.0,
-                color: Color::new(0.0, 0.0, 0.0, 1.0),
-                indent: 10.0,
-                prefix: String::new(),
-            },
+        let engine = nabrowse_css::StyleEngine::new(nabrowse_css::Stylesheet {
+            rules: stylesheet.rules.clone(),
+        });
+        let computed = engine.compute(&element.tag, &element.classes, element.id.as_deref(), None);
+
+        // Base styles by tag (used as fallback)
+        let (base_size, base_color) = match element.tag.as_str() {
+            "h1" => (28.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+            "h2" => (24.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+            "h3" => (20.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+            "h4" | "h5" | "h6" => (16.0, Color::new(0.1, 0.1, 0.1, 1.0)),
+            "a" => (14.0, Color::new(0.0, 0.0, 0.8, 1.0)),
+            "li" => (14.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+            "p" => (14.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+            _ => (14.0, Color::new(0.0, 0.0, 0.0, 1.0)),
+        };
+
+        let font_size = computed.font_size.unwrap_or(base_size);
+        let color = computed.color.unwrap_or(base_color);
+        let background_color = computed.background_color;
+        let indent = 10.0 + computed.margin.left + computed.padding.left;
+        let prefix = if element.tag == "li" { "\u{2022} ".to_string() } else { String::new() };
+
+        ElementStyle {
+            font_size,
+            color,
+            background_color,
+            indent,
+            prefix,
         }
     }
 
@@ -365,14 +414,44 @@ impl App {
 
                 // Draw render elements
                 if let Some(ref r) = rasterizer {
+                    let empty = Stylesheet::default();
+                    let stylesheet = self.stylesheet.as_ref().unwrap_or(&empty);
                     let mut y = 25.0;
 
                     for element in &self.render_elements {
-                        let style = Self::get_style(element);
+                        let style = Self::get_style(element, stylesheet);
                         let line_height = style.font_size + 6.0;
 
                         if y + line_height > self.size.height {
-                            break; // Stop if we run out of space
+                            break;
+                        }
+
+                        // Draw background rectangle if element has a background color
+                        if let Some(bg) = style.background_color {
+                            let text = if element.tag == "a" {
+                                format!("{} [{}]", element.text, element.href.as_deref().unwrap_or(""))
+                            } else {
+                                element.text.clone()
+                            };
+                            let full_text = format!("{}{}", style.prefix, text);
+                            let text_width = r.measure_line_with_size(&full_text, style.font_size) as f32;
+                            let bg_width = text_width + 20.0;
+                            let bg_height = line_height;
+
+                            // Draw background using a solid color quad
+                            let mut bg_rgba = Vec::with_capacity(bg_width as usize * bg_height as usize * 4);
+                            for _ in 0..(bg_width as usize * bg_height as usize) {
+                                bg_rgba.push((bg.r * 255.0) as u8);
+                                bg_rgba.push((bg.g * 255.0) as u8);
+                                bg_rgba.push((bg.b * 255.0) as u8);
+                                bg_rgba.push((bg.a * 255.0) as u8);
+                            }
+                            let bg_texture = text_renderer.create_texture(&bg_rgba, bg_width as u32, bg_height as u32);
+                            text_renderer.draw_texture(
+                                &mut encoder, &view, &bg_texture,
+                                style.indent - 10.0, y,
+                                self.size.width as u32, self.size.height as u32,
+                            );
                         }
 
                         let text = if element.tag == "a" {

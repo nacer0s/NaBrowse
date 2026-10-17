@@ -420,7 +420,7 @@ impl FontRasterizer {
     }
 
     /// Measure the pixel width of a line at a given font size.
-    fn measure_line_with_size(&self, text: &str, size: f32) -> u32 {
+    pub fn measure_line_with_size(&self, text: &str, size: f32) -> u32 {
         let mut width = 0.0f32;
         for ch in text.chars() {
             let (metrics, _) = self.font.rasterize(ch, size);
