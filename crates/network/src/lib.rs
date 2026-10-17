@@ -166,10 +166,21 @@ where
         .map_err(|e| NetworkError::Io(e))?;
     writer.shutdown().await.map_err(|e| NetworkError::Io(e))?;
     let mut buffer = Vec::new();
-    reader
-        .read_to_end(&mut buffer)
-        .await
-        .map_err(|e| NetworkError::Io(e))?;
+    let mut tmp = [0u8; 8192];
+    loop {
+        match reader.read(&mut tmp).await {
+            Ok(0) => break,
+            Ok(n) => buffer.extend_from_slice(&tmp[..n]),
+            Err(e) => {
+                // Some servers close TLS without sending close_notify.
+                // If we already received data, treat this as success.
+                if !buffer.is_empty() && e.to_string().contains("close_notify") {
+                    break;
+                }
+                return Err(NetworkError::Io(e));
+            }
+        }
+    }
     Ok(buffer)
 }
 
