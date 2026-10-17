@@ -1,0 +1,169 @@
+//! Application core: winit window + wgpu GPU context + render loop.
+//!
+//! Uses winit 0.31's ApplicationHandler pattern and wgpu 30's surface API.
+//! Creates a real OS window on Windows/macOS/Linux via winit and renders
+//! a clear color every frame using wgpu.
+
+use nabrowse_paint::GraphicsContext;
+use nabrowse_shared::{Color, Size};
+use winit::application::ApplicationHandler;
+use winit::event::WindowEvent;
+use winit::event_loop::ActiveEventLoop;
+use winit::window::{Window, WindowAttributes, WindowId};
+
+pub struct App {
+    window: Option<Box<dyn Window>>,
+    graphics: Option<GraphicsContext>,
+    size: Size,
+    clear_color: Color,
+    exiting: bool,
+}
+
+impl App {
+    pub fn new() -> Self {
+        Self {
+            window: None,
+            graphics: None,
+            size: Size::new(1024.0, 768.0),
+            clear_color: Color::nabrowse_bg(),
+            exiting: false,
+        }
+    }
+
+    fn render(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let graphics = self.graphics.as_mut().ok_or("graphics not initialized")?;
+        let window = self.window.as_ref().ok_or("window not initialized")?;
+
+        match graphics.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(surface_texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture) => {
+                let view = surface_texture
+                    .texture
+                    .create_view(&wgpu::TextureViewDescriptor::default());
+
+                let mut encoder = graphics
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("frame_encoder"),
+                    });
+
+                {
+                    let _render_pass =
+                        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("main_render_pass"),
+                            color_attachments: &[Some(
+                                wgpu::RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: self.clear_color.r as f64,
+                                            g: self.clear_color.g as f64,
+                                            b: self.clear_color.b as f64,
+                                            a: self.clear_color.a as f64,
+                                        }),
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                },
+                            )],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                }
+
+                graphics.queue.submit(std::iter::once(encoder.finish()));
+                graphics.queue.present(surface_texture);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                let size_px = window.surface_size();
+                graphics.resize(size_px.width, size_px.height);
+                self.size = Size::new(size_px.width as f32, size_px.height as f32);
+                window.request_redraw();
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                window.request_redraw();
+            }
+            _ => {
+                // Timeout, occluded, validation: skip this frame.
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+
+        let window = match event_loop.create_window(WindowAttributes::default()) {
+            Ok(w) => w,
+            Err(err) => {
+                tracing::error!("Failed to create window: {}", err);
+                event_loop.exit();
+                return;
+            }
+        };
+
+        let size_px = window.surface_size();
+        self.size = Size::new(size_px.width as f32, size_px.height as f32);
+
+        let graphics = match futures::executor::block_on(GraphicsContext::from_window(&*window))
+        {
+            Ok(g) => g,
+            Err(err) => {
+                tracing::error!("Failed to initialize graphics: {}", err);
+                event_loop.exit();
+                return;
+            }
+        };
+
+        self.window = Some(window);
+        self.graphics = Some(graphics);
+
+        tracing::info!("NaBrowse window opened");
+    }
+
+    fn can_create_surfaces(&mut self, _event_loop: &dyn ActiveEventLoop) {}
+
+    fn window_event(
+        &mut self,
+        _event_loop: &dyn ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested | WindowEvent::Destroyed => {
+                self.exiting = true;
+            }
+            WindowEvent::SurfaceResized(new_size) => {
+                if let Some(ref mut g) = self.graphics {
+                    g.resize(new_size.width, new_size.height);
+                }
+                self.size = Size::new(new_size.width as f32, new_size.height as f32);
+                if let Some(ref w) = self.window {
+                    w.request_redraw();
+                }
+            }
+            WindowEvent::RedrawRequested => {
+                let _ = self.render();
+            }
+            _ => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.exiting {
+            event_loop.exit();
+            return;
+        }
+        if let Some(ref w) = self.window {
+            w.request_redraw();
+        }
+    }
+}
+

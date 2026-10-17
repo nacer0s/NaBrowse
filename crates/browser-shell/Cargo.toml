@@ -1,0 +1,28 @@
+[package]
+name = "nabrowse-browser-shell"
+description = "Browser shell: window, tabs, UI for NaBrowse"
+edition = "2024"
+
+[dependencies]
+nabrowse-shared = { path = "../shared" }
+nabrowse-network = { path = "../network" }
+nabrowse-html = { path = "../html" }
+nabrowse-css = { path = "../css" }
+nabrowse-layout = { path = "../layout" }
+nabrowse-paint = { path = "../paint" }
+nabrowse-javascript = { path = "../javascript" }
+winit = "0.31.0-beta.3"
+wgpu = "30"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures = "0.3"
+
+[[bin]]
+name = "nabrowse"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

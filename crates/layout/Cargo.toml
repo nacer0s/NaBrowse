@@ -1,0 +1,9 @@
+[package]
+name = "nabrowse-layout"
+description = "Layout engine (box model, block/inline) for NaBrowse"
+edition = "2024"
+
+[dependencies]
+nabrowse-shared = { path = "../shared" }
+nabrowse-html = { path = "../html" }
+nabrowse-css = { path = "../css" }

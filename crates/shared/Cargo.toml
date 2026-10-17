@@ -1,0 +1,7 @@
+[package]
+name = "nabrowse-shared"
+description = "Shared geometry and core types for NaBrowse"
+edition = "2024"
+
+[dependencies]
+url = "2.5"

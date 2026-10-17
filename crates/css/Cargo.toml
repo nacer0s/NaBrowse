@@ -1,0 +1,7 @@
+[package]
+name = "nabrowse-css"
+description = "CSS parser and style computation for NaBrowse"
+edition = "2024"
+
+[dependencies]
+nabrowse-shared = { path = "../shared" }

@@ -1,0 +1,7 @@
+[package]
+name = "nabrowse-html"
+description = "HTML parser and DOM tree for NaBrowse"
+edition = "2024"
+
+[dependencies]
+nabrowse-shared = { path = "../shared" }

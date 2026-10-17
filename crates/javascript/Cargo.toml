@@ -1,0 +1,7 @@
+[package]
+name = "nabrowse-javascript"
+description = "JavaScript engine for NaBrowse"
+edition = "2024"
+
+[dependencies]
+thiserror = "2.0"
