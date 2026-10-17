@@ -95,7 +95,13 @@ impl App {
 }
 
 impl ApplicationHandler for App {
+    fn new_events(&mut self, event_loop: &dyn ActiveEventLoop, _cause: winit::event::StartCause) {
+        tracing::debug!("new_events called");
+        let _ = event_loop;
+    }
+
     fn resumed(&mut self, event_loop: &dyn ActiveEventLoop) {
+        tracing::info!("resumed() called");
         if self.window.is_some() {
             return;
         }
@@ -112,10 +118,13 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        tracing::info!("Window created successfully");
 
         let size_px = window.surface_size();
+        tracing::info!("Window surface size: {}x{}", size_px.width, size_px.height);
         self.size = Size::new(size_px.width as f32, size_px.height as f32);
 
+        tracing::info!("Initializing graphics...");
         let graphics = match futures::executor::block_on(GraphicsContext::from_window(&*window))
         {
             Ok(g) => g,
@@ -125,6 +134,7 @@ impl ApplicationHandler for App {
                 return;
             }
         };
+        tracing::info!("Graphics initialized successfully");
 
         self.window = Some(window);
         self.graphics = Some(graphics);
