@@ -379,6 +379,56 @@ impl FontRasterizer {
         (bitmap, width, line_height)
     }
 
+    /// Render a line with a custom font size.
+    pub fn render_line_with_size(
+        &self,
+        text: &str,
+        color: Color,
+        size: f32,
+    ) -> (Vec<u8>, u32, u32) {
+        let line_height = size as u32 + 6;
+        let width = self.measure_line_with_size(text, size).max(1);
+
+        let mut bitmap = vec![0u8; (width * line_height * 4) as usize];
+
+        let mut x_offset = 0.0f32;
+        for ch in text.chars() {
+            let (metrics, glyph_bitmap) = self.font.rasterize(ch, size);
+            let glyph_width = metrics.width as u32;
+            let glyph_height = metrics.height as u32;
+
+            for gy in 0..glyph_height {
+                for gx in 0..glyph_width {
+                    let glyph_idx = (gy * glyph_width + gx) as usize;
+                    let alpha = glyph_bitmap[glyph_idx];
+                    if alpha > 0 {
+                        let bx = (x_offset as u32 + gx).min(width - 1);
+                        let by = gy.min(line_height - 1);
+                        let idx = ((by * width + bx) * 4) as usize;
+                        bitmap[idx] = (color.r * 255.0) as u8;
+                        bitmap[idx + 1] = (color.g * 255.0) as u8;
+                        bitmap[idx + 2] = (color.b * 255.0) as u8;
+                        bitmap[idx + 3] = alpha;
+                    }
+                }
+            }
+
+            x_offset += metrics.advance_width;
+        }
+
+        (bitmap, width, line_height)
+    }
+
+    /// Measure the pixel width of a line at a given font size.
+    fn measure_line_with_size(&self, text: &str, size: f32) -> u32 {
+        let mut width = 0.0f32;
+        for ch in text.chars() {
+            let (metrics, _) = self.font.rasterize(ch, size);
+            width += metrics.advance_width;
+        }
+        width as u32
+    }
+
     /// Render multiple lines to a single tall bitmap.
     pub fn render_lines(&self, lines: &[String], color: Color) -> (Vec<u8>, u32, u32) {
         let line_height = self.line_height();
