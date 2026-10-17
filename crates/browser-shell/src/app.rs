@@ -37,6 +37,7 @@ impl App {
 
         let mut attrs = WindowAttributes::default();
         attrs.visible = true;
+        attrs.title = "NaBrowse".to_string();
         attrs.surface_size = Some(winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1024.0, 768.0)));
 
         let window = match event_loop.create_window(attrs) {
@@ -69,6 +70,10 @@ impl App {
         self.graphics = Some(graphics);
 
         tracing::info!("NaBrowse window opened");
+        // Request first redraw
+        if let Some(ref w) = self.window {
+            w.request_redraw();
+        }
     }
 
     fn render(&mut self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -190,9 +195,9 @@ impl ApplicationHandler for App {
             self.init_window(event_loop);
             return;
         }
-        if let Some(ref w) = self.window {
-            w.request_redraw();
-        }
+        // Use Wait control flow to avoid CPU spinning. Redraw is requested
+        // on-demand (SurfaceResized, RedrawRequested, etc.).
+        event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
     }
 }
 
