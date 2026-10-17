@@ -148,7 +148,11 @@ impl ApplicationHandler for App {
             tracing::info!("Creating window (first new_events, cause: {:?})", cause);
             self.init_window(event_loop);
         } else {
-            tracing::debug!("new_events: {:?}", cause);
+            // Suppress WaitCancelled flood (normal on Wayland — compositor cancels waits
+            // for frame callbacks and surface events).
+            if !matches!(cause, winit::event::StartCause::WaitCancelled { .. }) {
+                tracing::debug!("new_events: {:?}", cause);
+            }
         }
     }
 
