@@ -100,7 +100,11 @@ impl ApplicationHandler for App {
             return;
         }
 
-        let window = match event_loop.create_window(WindowAttributes::default()) {
+        let mut attrs = WindowAttributes::default();
+        attrs.visible = true;
+        attrs.surface_size = Some(winit::dpi::Size::Logical(winit::dpi::LogicalSize::new(1024.0, 768.0)));
+
+        let window = match event_loop.create_window(attrs) {
             Ok(w) => w,
             Err(err) => {
                 tracing::error!("Failed to create window: {}", err);
