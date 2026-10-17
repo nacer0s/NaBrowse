@@ -1,10 +1,7 @@
 //! NaBrowse browser shell.
 //!
-//! This is the entry point of the browser. It creates a window via winit,
-//! initializes a wgpu GPU context, and runs the main event loop.
-//!
-//! Phase 0: A real, working window that opens on any OS and clears to the
-//! NaBrowse background color. No stubs, no placeholders.
+//! Entry point: parses CLI arguments, fetches a URL, and displays
+//! the page content in a GPU-rendered window.
 
 mod app;
 
@@ -17,7 +14,12 @@ fn main() {
         )
         .init();
 
+    // Parse CLI arguments: nabrowse [URL]
+    let args: Vec<String> = std::env::args().collect();
+    let url = args.get(1).cloned().unwrap_or_else(|| "https://example.com".to_string());
+
     tracing::info!("Starting NaBrowse shell");
+    tracing::info!("URL: {}", url);
 
     let event_loop = match winit::event_loop::EventLoop::new() {
         Ok(el) => el,
@@ -27,7 +29,7 @@ fn main() {
         }
     };
 
-    let app = app::App::new();
+    let app = app::App::new(url);
 
     if let Err(err) = event_loop.run_app(app) {
         tracing::error!("Event loop error: {}", err);

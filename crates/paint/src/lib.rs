@@ -1,13 +1,14 @@
 //! GPU paint pipeline for NaBrowse.
 //!
 //! Wraps wgpu device, queue, surface, and swap chain. Provides resize and
-//! basic frame presentation. This is the foundation the layout/paint engine
-//! will draw into.
+//! basic frame presentation. Includes text rendering via the `text` module.
 
-use raw_window_handle::{
-    HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle,
-};
+pub mod text;
+
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use winit::window::Window;
+
+pub use text::{FontRasterizer, TextRenderer, TextTexture, html_to_text};
 
 /// Graphics context: device, queue, surface, and configuration.
 pub struct GraphicsContext {
@@ -16,6 +17,7 @@ pub struct GraphicsContext {
     pub queue: wgpu::Queue,
     pub config: wgpu::SurfaceConfiguration,
     pub size: winit::dpi::PhysicalSize<u32>,
+    pub text_renderer: Option<TextRenderer>,
 }
 
 impl GraphicsContext {
@@ -86,12 +88,20 @@ impl GraphicsContext {
 
         surface.configure(&device, &config);
 
+        // Create text renderer with Arc-wrapped device/queue
+        let text_renderer = TextRenderer::new(
+            std::sync::Arc::new(device.clone()),
+            std::sync::Arc::new(queue.clone()),
+            surface_format,
+        );
+
         Ok(Self {
             surface,
             device,
             queue,
             config,
             size: _size,
+            text_renderer: Some(text_renderer),
         })
     }
 

@@ -9,3 +9,5 @@ nabrowse-layout = { path = "../layout" }
 wgpu = "30"
 winit = "0.31.0-beta.3"
 raw-window-handle = "0.6"
+fontdue = "0.9"
+tracing = "0.1"
