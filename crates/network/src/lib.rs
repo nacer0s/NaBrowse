@@ -121,10 +121,12 @@ impl NetworkClient {
 
         let response_text = String::from_utf8_lossy(&buffer);
 
-        // Split headers and body.
-        let (head, body) = response_text
-            .split_once("\r\n\r\n")
-            .ok_or_else(|| NetworkError::HttpParse("no header/body separator".to_string()))?;
+        // Split headers and body. If no separator found (partial response),
+        // treat entire buffer as head with empty body.
+        let (head, body) = match response_text.split_once("\r\n\r\n") {
+            Some((h, b)) => (h, b),
+            None => (response_text.as_ref(), ""),
+        };
 
         // Parse status line.
         let status_line = head.lines().next().unwrap_or("HTTP/1.1 200 OK");
@@ -175,7 +177,7 @@ where
                 let msg = e.to_string();
                 // Some servers close TLS without sending close_notify.
                 // If we already received data, treat this as success.
-                if !buffer.is_empty() && msg.contains("close_notify") {
+                if msg.contains("close_notify") && !buffer.is_empty() {
                     break;
                 }
                 // If buffer is empty and we got a close_notify error,
