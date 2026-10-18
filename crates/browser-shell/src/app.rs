@@ -3,12 +3,13 @@
 //! Fetches a URL, parses HTML into a DOM tree, and renders structured
 //! elements (headings, paragraphs, links, lists) with GPU text rendering.
 
-use nabrowse_paint::{FontRasterizer, GraphicsContext};
+use nabrowse_paint::{FontRasterizer, GraphicsContext, TextRenderer};
 use nabrowse_shared::{Color, Size};
 use nabrowse_html::{HtmlParser, Node};
 use nabrowse_css::{CssParser, Stylesheet};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{WindowEvent, ElementState, MouseButton, KeyEvent, ButtonSource};
+use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 
@@ -34,33 +35,60 @@ struct ElementStyle {
     prefix: String,
 }
 
-pub struct App {
+/// A browser tab with its own page state.
+struct Tab {
     url: String,
+    render_elements: Vec<RenderElement>,
+    page_status: String,
+    stylesheet: Option<nabrowse_css::Stylesheet>,
+}
+
+impl Tab {
+    fn new(url: String) -> Self {
+        Self {
+            url,
+            render_elements: Vec::new(),
+            page_status: String::new(),
+            stylesheet: None,
+        }
+    }
+}
+
+pub struct App {
     window: Option<Box<dyn Window>>,
     graphics: Option<GraphicsContext>,
     size: Size,
     clear_color: Color,
     exiting: bool,
-    // Fetched page content
-    render_elements: Vec<RenderElement>,
-    page_status: String,
     font_rasterizer: Option<FontRasterizer>,
-    stylesheet: Option<nabrowse_css::Stylesheet>,
+    // Navigation history
+    history: Vec<String>,
+    history_index: usize,
+    // Tabs
+    tabs: Vec<Tab>,
+    current_tab: usize,
+    // URL bar
+    url_input: String,
+    url_bar_focused: bool,
+    cursor_pos: Option<(f32, f32)>,
 }
 
 impl App {
     pub fn new(url: String) -> Self {
         Self {
-            url,
             window: None,
             graphics: None,
             size: Size::new(1024.0, 768.0),
             clear_color: Color::nabrowse_bg(),
             exiting: false,
-            render_elements: Vec::new(),
-            page_status: String::new(),
             font_rasterizer: None,
-            stylesheet: None,
+            history: vec![url.clone()],
+            history_index: 0,
+            tabs: vec![Tab::new(url.clone())],
+            current_tab: 0,
+            url_input: url,
+            url_bar_focused: false,
+            cursor_pos: None,
         }
     }
 
@@ -116,44 +144,39 @@ impl App {
     }
 
     fn fetch_and_parse(&mut self) {
-        tracing::info!("Fetching: {}", self.url);
-        self.page_status = format!("Fetching {}...", self.url);
+        let url = self.tabs[self.current_tab].url.clone();
+        tracing::info!("Fetching: {}", url);
+        self.tabs[self.current_tab].page_status = format!("Fetching {}...", self.tabs[self.current_tab].url);
 
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
             Err(err) => {
-                self.page_status = format!("Failed to create runtime: {}", err);
+                self.tabs[self.current_tab].page_status = format!("Failed to create runtime: {}", err);
                 return;
             }
         };
 
         match runtime.block_on(async {
             let client = nabrowse_network::NetworkClient::new()?;
-            client.fetch(&self.url).await
+            client.fetch(&url).await
         }) {
             Ok(response) => {
                 tracing::info!(
                     "Fetched {} (status: {}, {} bytes)",
-                    self.url,
+                    self.tabs[self.current_tab].url,
                     response.status,
                     response.body.len()
                 );
-                self.page_status = format!(
+                self.tabs[self.current_tab].page_status = format!(
                     "{} | Status: {} | {} bytes",
-                    self.url, response.status, response.body.len()
+                    self.tabs[self.current_tab].url, response.status, response.body.len()
                 );
 
                 // Parse HTML into DOM tree
                 let html = String::from_utf8_lossy(&response.body);
                 let document = HtmlParser::new(html.to_string()).parse();
 
-                // Walk DOM tree and collect renderable elements first
-                self.render_elements = Vec::new();
-                for child in &document.children {
-                    self.collect_elements(child);
-                }
-
-                // Extract CSS from <style> tags by iterating document children
+                // Extract CSS from <style> tags
                 let mut css_sources = Vec::new();
                 for child in &document.children {
                     Self::extract_stylesheets(child, &mut css_sources);
@@ -162,30 +185,253 @@ impl App {
                 if !combined_css.is_empty() {
                     let stylesheet = CssParser::new(combined_css).parse();
                     tracing::info!("Parsed {} CSS rules", stylesheet.rules.len());
-                    self.stylesheet = Some(stylesheet);
+                    self.tabs[self.current_tab].stylesheet = Some(stylesheet);
                 } else {
-                    self.stylesheet = Some(nabrowse_css::Stylesheet::default());
+                    self.tabs[self.current_tab].stylesheet = Some(nabrowse_css::Stylesheet::default());
                 }
 
                 // Walk DOM tree and collect renderable elements
-                self.render_elements = Vec::new();
+                self.tabs[self.current_tab].render_elements = Vec::new();
                 for child in &document.children {
                     self.collect_elements(child);
                 }
 
-                tracing::info!("Collected {} render elements", self.render_elements.len());
+                tracing::info!("Collected {} render elements", self.tabs[self.current_tab].render_elements.len());
             }
             Err(err) => {
                 tracing::error!("Fetch failed: {}", err);
-                self.page_status = format!("Error: {}", err);
-                self.render_elements = vec![RenderElement {
+                self.tabs[self.current_tab].page_status = format!("Error: {}", err);
+                self.tabs[self.current_tab].render_elements = vec![RenderElement {
                     tag: "error".to_string(),
-                    text: self.page_status.clone(),
+                    text: self.tabs[self.current_tab].page_status.clone(),
                     href: None,
                     classes: Vec::new(),
                     id: None,
                 }];
             }
+        }
+    }
+
+
+    /// Navigate to a new URL, truncating forward history.
+    fn navigate_to(&mut self, url: String) {
+        // Truncate forward history
+        self.history.truncate(self.history_index + 1);
+        self.history.push(url.clone());
+        self.history_index += 1;
+
+        // Update current tab
+        self.tabs[self.current_tab].url = url.clone();
+        self.tabs[self.current_tab].page_status = String::new();
+        self.tabs[self.current_tab].render_elements = Vec::new();
+        self.tabs[self.current_tab].stylesheet = None;
+
+        // Update URL bar
+        self.url_input = url.clone();
+        self.url_bar_focused = false;
+
+        // Fetch new page
+        self.fetch_and_parse();
+
+        // Request redraw
+        if let Some(ref w) = self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Navigate back in history.
+    fn go_back(&mut self) {
+        if self.history_index > 0 {
+            self.history_index -= 1;
+            let url = self.history[self.history_index].clone();
+            self.tabs[self.current_tab].url = url.clone();
+            self.tabs[self.current_tab].page_status = String::new();
+            self.tabs[self.current_tab].render_elements = Vec::new();
+            self.tabs[self.current_tab].stylesheet = None;
+            self.url_input = url.clone();
+            self.url_bar_focused = false;
+            self.fetch_and_parse();
+            if let Some(ref w) = self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// Navigate forward in history.
+    fn go_forward(&mut self) {
+        if self.history_index + 1 < self.history.len() {
+            self.history_index += 1;
+            let url = self.history[self.history_index].clone();
+            self.tabs[self.current_tab].url = url.clone();
+            self.tabs[self.current_tab].page_status = String::new();
+            self.tabs[self.current_tab].render_elements = Vec::new();
+            self.tabs[self.current_tab].stylesheet = None;
+            self.url_input = url.clone();
+            self.url_bar_focused = false;
+            self.fetch_and_parse();
+            if let Some(ref w) = self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// Switch to a different tab.
+    fn switch_tab(&mut self, index: usize) {
+        if index < self.tabs.len() {
+            self.current_tab = index;
+            self.url_input = self.tabs[index].url.clone();
+            if let Some(ref w) = self.window {
+                w.request_redraw();
+            }
+        }
+    }
+
+    /// Open a new tab.
+    fn new_tab(&mut self) {
+        self.tabs.push(Tab::new("about:blank".to_string()));
+        self.current_tab = self.tabs.len() - 1;
+        self.url_input = "about:blank".to_string();
+        if let Some(ref w) = self.window {
+            w.request_redraw();
+        }
+    }
+
+    /// Handle keyboard input for the URL bar.
+    fn handle_keyboard(&mut self, event: &KeyEvent) {
+        if !self.url_bar_focused {
+            return;
+        }
+        match &event.logical_key {
+            Key::Character(ch) => {
+                if event.state == ElementState::Pressed {
+                    self.url_input.push_str(ch);
+                }
+            }
+            Key::Named(NamedKey::Enter) => {
+                if event.state == ElementState::Pressed {
+                    let url = self.url_input.clone();
+                    self.navigate_to(url);
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                if event.state == ElementState::Pressed {
+                    self.url_input.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle mouse clicks on UI elements.
+    fn handle_mouse_click(&mut self, x: f32, y: f32) {
+        // Tab bar area: y=0..30
+        if y < 30.0 {
+            let tab_width = 100.0;
+            let tab_index = (x / tab_width) as usize;
+            if tab_index < self.tabs.len() {
+                self.switch_tab(tab_index);
+            } else if x >= self.tabs.len() as f32 * tab_width
+                && x < self.tabs.len() as f32 * tab_width + 30.0
+            {
+                self.new_tab();
+            }
+            return;
+        }
+
+        // URL bar area: y=30..60
+        if y >= 30.0 && y < 60.0 {
+            // Back button: x=5..30
+            if x >= 5.0 && x < 30.0 {
+                self.go_back();
+                return;
+            }
+            // Forward button: x=30..55
+            if x >= 30.0 && x < 55.0 {
+                self.go_forward();
+                return;
+            }
+            // URL input area: x=55..
+            self.url_bar_focused = true;
+            return;
+        }
+
+        // Clicking elsewhere unfocuses URL bar
+        self.url_bar_focused = false;
+    }
+
+    /// Draw the browser UI (tab bar, URL bar, nav buttons).
+    fn draw_ui(encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView, text_renderer: &TextRenderer, rasterizer: &FontRasterizer, tabs: &[Tab], url_input: &str, url_bar_focused: bool, size: Size) {
+        let w = size.width as u32;
+        let h = size.height as u32;
+
+        // --- Tab bar background ---
+        let tab_bg = vec![200u8; (w * 30 * 4) as usize];
+        let tab_bg_tex = text_renderer.create_texture(&tab_bg, w, 30);
+        text_renderer.draw_texture(encoder, view, &tab_bg_tex, 0.0, 0.0, w, h);
+
+        // Draw tab labels
+        let tab_width = 100.0;
+        for (i, tab) in tabs.iter().enumerate() {
+            let label = if tab.url.len() > 12 {
+                format!("{}...", &tab.url[..12])
+            } else {
+                tab.url.clone()
+            };
+            let (bitmap, bw, bh) = rasterizer.render_line(
+                &label,
+                Color::new(0.0, 0.0, 0.0, 1.0),
+            );
+            if bw > 0 && bh > 0 {
+                let tex = text_renderer.create_texture(&bitmap, bw, bh);
+                text_renderer.draw_texture(
+                    encoder, view, &tex,
+                    i as f32 * tab_width + 5.0, 5.0, w, h,
+                );
+            }
+        }
+
+        // --- New tab button (+) ---
+        let (bitmap, bw, bh) = rasterizer.render_line("+", Color::new(0.0, 0.0, 0.0, 1.0));
+        if bw > 0 && bh > 0 {
+            let tex = text_renderer.create_texture(&bitmap, bw, bh);
+            text_renderer.draw_texture(
+                encoder, view, &tex,
+                tabs.len() as f32 * tab_width + 5.0, 5.0, w, h,
+            );
+        }
+
+        // --- URL bar background ---
+        let url_bg = vec![240u8; (w * 30 * 4) as usize];
+        let url_bg_tex = text_renderer.create_texture(&url_bg, w, 30);
+        text_renderer.draw_texture(encoder, view, &url_bg_tex, 0.0, 30.0, w, h);
+
+        // --- Back button (<) ---
+        let (bitmap, bw, bh) = rasterizer.render_line("<", Color::new(0.0, 0.0, 0.0, 1.0));
+        if bw > 0 && bh > 0 {
+            let tex = text_renderer.create_texture(&bitmap, bw, bh);
+            text_renderer.draw_texture(encoder, view, &tex, 8.0, 35.0, w, h);
+        }
+
+        // --- Forward button (>) ---
+        let (bitmap, bw, bh) = rasterizer.render_line(">", Color::new(0.0, 0.0, 0.0, 1.0));
+        if bw > 0 && bh > 0 {
+            let tex = text_renderer.create_texture(&bitmap, bw, bh);
+            text_renderer.draw_texture(encoder, view, &tex, 33.0, 35.0, w, h);
+        }
+
+        // --- URL text ---
+        let display_url = if url_bar_focused {
+            format!("{}_", url_input)
+        } else {
+            url_input.to_string()
+        };
+        let (bitmap, bw, bh) = rasterizer.render_line(
+            &display_url,
+            Color::new(0.0, 0.0, 0.0, 1.0),
+        );
+        if bw > 0 && bh > 0 {
+            let tex = text_renderer.create_texture(&bitmap, bw, bh);
+            text_renderer.draw_texture(encoder, view, &tex, 60.0, 35.0, w, h);
         }
     }
 
@@ -232,7 +478,7 @@ impl App {
                     .map(|(_, v)| v.clone());
 
                 if !text.is_empty() {
-                    self.render_elements.push(RenderElement {
+                    self.tabs[self.current_tab].render_elements.push(RenderElement {
                         tag: tag.clone(),
                         text,
                         href,
@@ -249,7 +495,7 @@ impl App {
             Node::Text(t) => {
                 let text = t.content.trim();
                 if !text.is_empty() {
-                    self.render_elements.push(RenderElement {
+                    self.tabs[self.current_tab].render_elements.push(RenderElement {
                         tag: "text".to_string(),
                         text: text.to_string(),
                         href: None,
@@ -437,11 +683,18 @@ impl App {
                     });
                 }
 
+                // Draw browser UI (tab bar, URL bar, nav buttons)
+                {
+                    if let Some(ref r) = rasterizer {
+                        Self::draw_ui(&mut encoder, &view, text_renderer, r, &self.tabs, &self.url_input, self.url_bar_focused, self.size);
+                    }
+                }
+
                 // Draw status line
-                if !self.page_status.is_empty() {
+                if !self.tabs[self.current_tab].page_status.is_empty() {
                     if let Some(ref r) = rasterizer {
                         let (bitmap, w, h) =
-                            r.render_line(&self.page_status, Color::new(0.3, 0.3, 0.3, 1.0));
+                            r.render_line(&self.tabs[self.current_tab].page_status, Color::new(0.3, 0.3, 0.3, 1.0));
                         if w > 0 && h > 0 {
                             let text_texture = text_renderer.create_texture(&bitmap, w, h);
                             text_renderer.draw_texture(
@@ -460,10 +713,10 @@ impl App {
                 // Draw render elements
                 if let Some(ref r) = rasterizer {
                     let empty = Stylesheet::default();
-                    let stylesheet = self.stylesheet.as_ref().unwrap_or(&empty);
+                    let stylesheet = self.tabs[self.current_tab].stylesheet.as_ref().unwrap_or(&empty);
                     let mut y = 25.0;
 
-                    for element in &self.render_elements {
+                    for element in &self.tabs[self.current_tab].render_elements {
                         let style = Self::get_style(element, stylesheet);
                         let line_height = style.font_size + 6.0;
                         // Apply CSS margin-top
@@ -603,6 +856,20 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let _ = self.render();
+            }
+            WindowEvent::PointerButton { state, button, .. } => {
+                if state == ElementState::Pressed && button == ButtonSource::Mouse(MouseButton::Left) {
+                    if let Some((x, y)) = self.cursor_pos {
+                        self.handle_mouse_click(x, y);
+                    }
+                }
+            }
+            WindowEvent::PointerMoved { position, .. } => {
+                // Track cursor position for click handling
+                self.cursor_pos = Some((position.x as f32, position.y as f32));
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.handle_keyboard(&event);
             }
             _ => {}
         }
