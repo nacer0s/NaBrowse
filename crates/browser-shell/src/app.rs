@@ -421,7 +421,7 @@ impl App {
 
         // --- URL text ---
         let display_url = if url_bar_focused {
-            format!("{}_", url_input)
+            format!("{}|", url_input)
         } else {
             url_input.to_string()
         };

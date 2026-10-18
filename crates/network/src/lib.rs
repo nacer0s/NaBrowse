@@ -89,7 +89,10 @@ impl NetworkClient {
             .version(http::Version::HTTP_11)
             .header("Host", host)
             .header("Connection", "close")
-            .header("User-Agent", "NaBrowse/0.1.0")
+            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) NaBrowse/0.1.0 Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Accept-Encoding", "identity")
             .body(())
             .map_err(|e| NetworkError::Http(e.to_string()))?;
 
