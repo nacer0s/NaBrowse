@@ -305,6 +305,39 @@ impl App {
         text.trim().to_string()
     }
 
+    /// Wrap text into lines that fit within the available width.
+    fn wrap_text(text: &str, font_size: f32, indent: f32, screen_width: f32) -> Vec<String> {
+        let max_width = (screen_width - indent - 10.0).max(50.0) as u32;
+        let words: Vec<&str> = text.split_whitespace().collect();
+        let mut lines = Vec::new();
+        let mut current_line = String::new();
+
+        for word in words {
+            let candidate = if current_line.is_empty() {
+                word.to_string()
+            } else {
+                format!("{} {}", current_line, word)
+            };
+            // Approximate width: each char is roughly 0.6 * font_size
+            let candidate_width = (candidate.len() as f32 * font_size * 0.6) as u32;
+            if candidate_width <= max_width {
+                current_line = candidate;
+            } else {
+                if !current_line.is_empty() {
+                    lines.push(current_line.clone());
+                }
+                current_line = word.to_string();
+            }
+        }
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
+        if lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines
+    }
+
     /// Get the style for an element using the CSS engine.
     fn get_style(element: &RenderElement, stylesheet: &nabrowse_css::Stylesheet) -> ElementStyle {
         if element.tag == "error" {
@@ -478,22 +511,27 @@ impl App {
                         };
 
                         let full_text = format!("{}{}", style.prefix, text);
-                        let (bitmap, w, h) = r.render_line_with_size(
-                            &full_text,
-                            style.color,
-                            style.font_size,
-                        );
-                        if w > 0 && h > 0 {
-                            let text_texture = text_renderer.create_texture(&bitmap, w, h);
-                            text_renderer.draw_texture(
-                                &mut encoder,
-                                &view,
-                                &text_texture,
-                                style.indent,
-                                y,
-                                self.size.width as u32,
-                                self.size.height as u32,
+                        let wrapped_lines = Self::wrap_text(&full_text, style.font_size, style.indent, self.size.width);
+
+                        for line in &wrapped_lines {
+                            let (bitmap, w, h) = r.render_line_with_size(
+                                line,
+                                style.color,
+                                style.font_size,
                             );
+                            if w > 0 && h > 0 {
+                                let text_texture = text_renderer.create_texture(&bitmap, w, h);
+                                text_renderer.draw_texture(
+                                    &mut encoder,
+                                    &view,
+                                    &text_texture,
+                                    style.indent,
+                                    y,
+                                    self.size.width as u32,
+                                    self.size.height as u32,
+                                );
+                            }
+                            y += line_height;
                         }
 
                         // Apply CSS padding-bottom
